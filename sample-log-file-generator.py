@@ -4,7 +4,9 @@ import numpy as np
 import random
 import time
 from datetime import datetime
+from log_util import setup_logger
 
+logger = setup_logger()
 
 def generate_log_file(num_players: int, num_matches: int, dates: str) -> None:
     """
@@ -34,7 +36,7 @@ def generate_log_file(num_players: int, num_matches: int, dates: str) -> None:
 
     :corruption: There is a 0.2% chance that some lines in the log will be corrupted, simulating real-world errors.
     """
-    print("Generate sample log script start")
+    logger.info("Generate sample log script start")
     CORRUPTION_PERCENTAGE = 0.2
     NUM_OPERATORS = 71  # Number of unique operators
     MIN_KILLS = 0  # Minimum kills in a game
@@ -123,13 +125,13 @@ def generate_log_file(num_players: int, num_matches: int, dates: str) -> None:
     start_time = time.time()
     for date in dates.split(","):
         output_file = f"r6-matches-{date}.log"
-        print(
+        logger.info(
             f"Generating '{output_file} with {num_matches} matches for {num_players} unique players'"
         )
         with open(output_file, "w") as f:
             for match_num in range(num_matches):
-                if match_num % 1000000 == 0:
-                    print(
+                if match_num % 1000000 == 0 and match_num != 0:
+                    logger.info(
                         f"{match_num} matches processed with elapsed time {time.time()-start_time}"
                     )
                 player_ids = get_unique_players_per_game_based_on_distribution(
@@ -155,8 +157,8 @@ def generate_log_file(num_players: int, num_matches: int, dates: str) -> None:
                         f.write(f"{nb_kills},%^&*NH&*HJ,{operator_id}\n")
                     else:
                         f.write(f"{player_id},{match_id},{operator_id},{nb_kills}\n")
-        print(f"Log file '{output_file}' generated successfully")
-    print(f"Finished generating all files with elapsed time {time.time()-start_time}")
+        logger.info(f"Log file '{output_file}' generated successfully")
+    logger.info(f"Finished generating all files with elapsed time {time.time()-start_time}")
 
 
 def assign_operators_to_players(
@@ -271,7 +273,7 @@ def read_players_file(file_path: str) -> list[str]:
     :raises FileNotFoundError: If the file does not exist at the specified `file_path`.
     """
     # Read UUIDs from the file and store them in a list
-    print(f"Reading player file '{file_path}'")
+    logger.info(f"Reading player file '{file_path}'")
     with open(file_path, "r") as f:
         player_uuids = [line.strip() for line in f.readlines()]
     return player_uuids
