@@ -8,6 +8,7 @@ from log_util import setup_logger
 
 logger = setup_logger()
 
+
 def generate_log_file(num_players: int, num_matches: int, dates: str) -> None:
     """
     Generates log files for R6 Siege matches with player and operator statistics, simulating various game scenarios.
@@ -158,7 +159,9 @@ def generate_log_file(num_players: int, num_matches: int, dates: str) -> None:
                     else:
                         f.write(f"{player_id},{match_id},{operator_id},{nb_kills}\n")
         logger.info(f"Log file '{output_file}' generated successfully")
-    logger.info(f"Finished generating all files with elapsed time {time.time()-start_time}")
+    logger.info(
+        f"Finished generating all files with elapsed time {time.time()-start_time}"
+    )
 
 
 def assign_operators_to_players(
