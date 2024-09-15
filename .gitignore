@@ -1,0 +1,12 @@
+/.project
+/__pycache__/
+/.pydevproject
+/.settings/
+/logs/
+/r6-match*
+/player_top10_*
+/operator_top100_*
+/daily_operator_top100_*
+/chunks-*
+/match-sorted-r6-matches-*
+/player-sorted-r6-matches-*
