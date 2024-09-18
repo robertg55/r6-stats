@@ -4,6 +4,7 @@ import argparse
 from log_util import setup_logger, delete_directory
 
 logger = setup_logger()
+CHUNK_SIZE = 1024 * 1024 * 512  # 0.5GB
 
 
 def process_trim_line(line: str) -> str:
@@ -64,7 +65,7 @@ def split_file(
     return chunk_files
 
 
-def merge_files(chunk_files: list[str], output_file: str) -> None:
+def merge_chunk_files(chunk_files: list[str], output_file: str) -> None:
     """
     Merges multiple sorted chunk files into a single sorted output file.
 
@@ -111,15 +112,14 @@ def sort_file(
     # Define file paths and sizes
     output_dir = f"chunks-{process_name}"
     os.makedirs(output_dir, exist_ok=True)
-    chunk_size = 1024 * 1024 * 512  # 0.5GB
 
     # Step 1: Split and sort chunks
     logger.info("separating chunk files")
-    chunk_files = split_file(file_name, chunk_size, output_dir, trim_first_field)
+    chunk_files = split_file(file_name, CHUNK_SIZE, output_dir, trim_first_field)
 
     # Step 2: Merge sorted chunks into one final sorted file
     logger.info("merging chunk files")
-    merge_files(chunk_files, output_file_name)
+    merge_chunk_files(chunk_files, output_file_name)
 
     # delete the temporary chunk files after sorting
     delete_directory(output_dir)

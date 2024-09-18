@@ -1,18 +1,20 @@
 import pandas as pd
 import uuid
 import argparse
+import os
 import time
 import multiprocessing
 from log_sorter import sort_file
 from log_util import (
     get_files_in_current_directory,
-    get_previous_day,
-    signal_work_queue_finished,
     setup_logger,
+    signal_work_queue_finished,
 )
 from typing import Generator, Optional
 
 logger = setup_logger()
+
+WORKER_CACHE_MULTIPLIER = 4  # Number of log batches per worker to read in memory for workers to be ready consume, low number could induce worker idle time, high number increases memory usage
 
 
 class LogMatchBatchParser:
@@ -247,72 +249,125 @@ def process_batch(batch: list[list[str]]) -> dict[int, float]:
     return operator_top_100
 
 
-def results_queue_consumer(results_queue: multiprocessing.Queue) -> None:
-    """
-    Consumes results from a queue, processes them by updating statistics for the top
-    100 operators, and stores the final result back into the queue when complete.
-
-    :param results_queue: A multiprocessing.Queue object that stores batches of results
-                          to be consumed and processed.
-    """
-    daily_operator_top_100 = None
-    while True:
-        df_to_process = results_queue.get()  # Wait and get the result from the queue
-        if df_to_process is None:
-            results_queue.put(daily_operator_top_100)
-            break
-        try:
-            daily_operator_top_100 = concat_statistics_operator_top_100(
-                df_to_process, daily_operator_top_100
-            )
-        except Exception as e:
-            logger.error(f"error processing daily_operator_top_100 {e}")
-
-
 def worker(
     work_queue: multiprocessing.Queue, result_queue: multiprocessing.Queue
 ) -> None:
     """
-    Worker function that processes tasks from the work queue and places results into the
-    result queue. It signals when no more tasks are available by placing a `None` into the
-    work queue.
+    Worker function that processes batches of tasks from the work queue and aggregates results.
 
-    :param work_queue: A multiprocessing.Queue object containing tasks to be processed.
-    :param result_queue: A multiprocessing.Queue object where results are placed after processing.
+    This function continuously retrieves tasks from the `work_queue`, processes each batch, and
+    accumulates the top 100 operators' statistics. Once all tasks are processed (signaled by
+    a `None` task in the queue), the aggregated result is placed in the `result_queue`.
+
+    The worker keeps running until it encounters a `None` in the `work_queue`, which indicates
+    the end of tasks. At that point, it places the accumulated results into the `result_queue`
+    and signals that it has finished processing.
+
+    :param work_queue: A multiprocessing.Queue object containing batches of tasks to be processed.
+    :param result_queue: A multiprocessing.Queue object where the aggregated results are placed.
     """
+    daily_operator_top_100 = None
     while True:
         task = work_queue.get()
         if task is None:
-            break
-        try:
-            result = process_batch(task)
-        except Exception as e:
-            logger.error(f"Error processing batch: {e}")
-        else:
-            result_queue.put(result)
+            result_queue.put(daily_operator_top_100)
+
+        result = process_batch(task)
+        daily_operator_top_100 = concat_statistics_operator_top_100(
+            result, daily_operator_top_100
+        )
     signal_work_queue_finished(work_queue)
 
 
-def generate_statistics(
-    files_to_consume: Optional[str],
-    batch_size: int,
+def multi_process_batch_consumption(
+    file_to_consume: str,
     worker_count: int,
-    number_of_past_days: int,
+    batch_size: int,
     requires_sorting: bool,
+    date: str,
+    worker_cache_multiplier: int,
 ) -> None:
     """
-    Generates the top 100 operator statistics from log files for the specified days.
+    Processes a log file using multiple workers and updates the top 100 operators' statistics.
 
-    This function processes log files in batches, computes the top 100 operators by average kills, and writes
-    the results to files. It uses multiprocessing to parallelize the task.
+    This function uses multiprocessing to parse and process a log file in batches. Each batch is consumed by a pool of
+    worker processes, which compute statistics and aggregate the top 100 operators by kills. The results are gathered
+    from all workers and combined into a final set of statistics, which is then written to an output file named with the
+    provided `date`.
 
-    :param files_to_consume: A comma-separated string of filenames to process, or None to process all available files.
-    :param batch_size: The number of log entries to process per batch.
+    The function supports both sorted and unsorted files, handles batch consumption, and ensures proper cleanup of
+    processes and temporary files once the task is complete.
+
+    :param file_to_consume: The path to the log file that will be processed.
     :param worker_count: The number of worker processes to use for parallel processing.
-    :param number_of_past_days: The number of past days to include in the analysis.
-    :param requires_sorting: A flag indicating whether the log files need to be sorted before processing.
+    :param batch_size: The number of log entries to process per batch.
+    :param requires_sorting: Boolean flag indicating whether the file was sorted before processing.
+    :param date: The date string used for naming the output file.
+    :param worker_cache_multiplier: Multiplier for worker queue caching, determining how many batches to queue for each worker.
     """
-    WORKER_CACHE_MULTIPLIER = 8
+    # Create a multiprocessing Queue to store results in a thread-safe way
+    manager = multiprocessing.Manager()
+    result_queue = manager.Queue()
+    work_queue = manager.Queue()
+    workers = []
+    for _ in range(worker_count):
+        p = multiprocessing.Process(target=worker, args=(work_queue, result_queue))
+        workers.append(p)
+        p.start()
+    parser = LogMatchBatchParser(
+        file_to_consume, batch_size=batch_size, trimmed=requires_sorting
+    )
+    log_parser_generator = parser.parse_logs_from_file_in_batches()
+
+    next_batch = None
+    while True:
+        if work_queue.qsize() < worker_count * worker_cache_multiplier:
+            next_batch = next(log_parser_generator, None)
+            work_queue.put(next_batch)
+            if next_batch is None:
+                signal_work_queue_finished(work_queue)
+                break
+    daily_operator_top_100 = None
+    for worker_process in workers:
+        results_df = result_queue.get()  # Waits on output results from every worker
+        daily_operator_top_100 = concat_statistics_operator_top_100(
+            results_df, daily_operator_top_100
+        )
+    write_operator_top_100_to_file(
+        daily_operator_top_100, f"daily_operator_top100_{date}.txt"
+    )
+    # Cleanup
+    for worker_process in workers:
+        worker_process.terminate()
+    manager.shutdown()
+
+
+def generate_daily_operator_top100(
+    files_to_consume: Optional[str],
+    number_of_past_days: int,
+    requires_sorting: bool,
+    worker_count: int,
+    batch_size: int,
+    worker_cache_multiplier: int,
+) -> str:
+    """
+    Processes log files and generates the top 100 operators' statistics for the past `number_of_past_days`.
+
+    This function processes R6 Siege match logs to compute the top 100 operators by average kills. It processes the
+    files from the past `number_of_past_days`, optionally sorts them by operator, and then performs batch consumption
+    using multiple workers. If a file has already been processed, it will be skipped.
+
+    The function returns the latest date processed, which is used in naming the final output file.
+
+    :param files_to_consume: A comma-separated string of filenames to process, or None to process all matching files
+                             from the directory.
+    :param number_of_past_days: The number of past days' worth of log files to include in the analysis.
+    :param requires_sorting: Boolean flag indicating whether the files need to be sorted by operator before processing.
+    :param worker_count: The number of worker processes to use for parallel processing.
+    :param batch_size: The number of log entries to process per batch.
+    :param worker_cache_multiplier: Multiplier for worker queue caching, determining how many batches to queue for each worker.
+    :return: A string representing the latest date that was processed for which statistics will be generated.
+    """
     files_in_directory = get_files_in_current_directory()
     if not files_to_consume:
         r6_files = [
@@ -324,7 +379,7 @@ def generate_statistics(
     logger.info(
         f"processing operator top 100 matches by kill average for files {sorted_r6_files}"
     )
-    daily_operator_top_100 = None
+
     date = None
     for file_path in sorted_r6_files:
         date = file_path[11:-4]
@@ -337,53 +392,56 @@ def generate_statistics(
             sort_file(file_path, new_file_path, "operator", True)
         else:
             new_file_path = file_path
-        logger.info(f"")
-        # Create a multiprocessing Queue to store results in a thread-safe way
-        manager = multiprocessing.Manager()
-        result_queue = manager.Queue()
-        work_queue = manager.Queue()
-
-        consumer_process = multiprocessing.Process(
-            target=results_queue_consumer, args=(result_queue,)
+        multi_process_batch_consumption(
+            new_file_path,
+            worker_count,
+            batch_size,
+            requires_sorting,
+            date,
+            worker_cache_multiplier,
         )
-        consumer_process.start()
+        if requires_sorting:
+            # cleanup of sorted files
+            os.remove(new_file_path)
+    return date
 
-        workers = []
-        for _ in range(worker_count):
-            p = multiprocessing.Process(target=worker, args=(work_queue, result_queue))
-            workers.append(p)
-            p.start()
-        parser = LogMatchBatchParser(
-            new_file_path, batch_size=batch_size, trimmed=requires_sorting
-        )
-        log_parser_generator = parser.parse_logs_from_file_in_batches()
 
-        next_batch = None
-        while True:
-            if work_queue.qsize() < worker_count * WORKER_CACHE_MULTIPLIER:
-                next_batch = next(log_parser_generator, None)
-                work_queue.put(next_batch)
-                if next_batch is None:
-                    signal_work_queue_finished(work_queue)
-                    break
-        for worker_process in workers:
-            # wait for all workers to finish
-            worker_process.join()
-        result_queue.put(
-            None
-        )  # tell the consumer_process to finish and return final result
-        time.sleep(30)
-        consumer_process.join()
-        daily_operator_top_100 = result_queue.get()
-        write_operator_top_100_to_file(
-            daily_operator_top_100, f"daily_operator_top100_{date}.txt"
-        )
+def generate_statistics(
+    files_to_consume: Optional[str],
+    batch_size: int,
+    worker_count: int,
+    number_of_past_days: int,
+    requires_sorting: bool,
+    worker_cache_multiplier: int,
+) -> None:
+    """
+    Generates the top 100 operator statistics from log files for the specified days.
+
+    This function processes log files in batches, computes the top 100 operators by average kills, and writes
+    the results to files. It uses multiprocessing to parallelize the task.
+
+    :param files_to_consume: A comma-separated string of filenames to process, or None to process all available files.
+    :param batch_size: The number of log entries to process per batch.
+    :param worker_count: The number of worker processes to use for parallel processing.
+    :param number_of_past_days: The number of past days to include in the analysis.
+    :param requires_sorting: A flag indicating whether the log files need to be sorted before processing.
+    :param worker_cache_multiplier: Multiplier for worker queue caching, determining how many batches to queue for each worker.
+    """
+    latest_date = generate_daily_operator_top100(
+        files_to_consume,
+        number_of_past_days,
+        requires_sorting,
+        worker_count,
+        batch_size,
+        worker_cache_multiplier,
+    )
 
     files_in_directory = get_files_in_current_directory()
     daily_files = [
         file for file in files_in_directory if file.startswith("daily_operator_top100_")
     ]
     sorted_daily_files = sorted(daily_files)[-number_of_past_days:]
+    daily_operator_top_100 = None
     for daily_file in sorted_daily_files:
         # Combines previous single day files into one
         previous_day_operator_top_100 = load_operator_top_100_from_specific_day(
@@ -394,7 +452,7 @@ def generate_statistics(
         )
 
     write_operator_top_100_to_file(
-        daily_operator_top_100, f"operator_top100_{date}.txt"
+        daily_operator_top_100, f"operator_top100_{latest_date}.txt"
     )
     logger.info("finished computing operator top 100 matches by kill average")
 
@@ -431,6 +489,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Sort the log files if they aren't already sorted by match number",
     )
+    parser.add_argument(
+        "--worker-cache-multiplier",
+        type=int,
+        default=4,
+        help="Number of batches to read from logs for different workers to be consumed, low number could induce worker idle time, high number increases memory usage",
+    )
 
     args = parser.parse_args()
 
@@ -440,4 +504,5 @@ if __name__ == "__main__":
         args.workers,
         args.number_of_past_days,
         args.sort,
+        args.worker_cache_multiplier,
     )

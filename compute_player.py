@@ -6,15 +6,12 @@ import time
 import multiprocessing
 import shutil
 from typing import Generator, Optional
-from log_sorter import sort_file
+from log_sorter import split_file, CHUNK_SIZE, merge_chunk_files
 from log_util import (
     get_files_in_current_directory,
-    get_previous_day,
     signal_work_queue_finished,
     check_folder_exists_in_current_directory,
-    check_file_exists_in_given_directory,
     setup_logger,
-    get_folders_in_current_directory,
     delete_directory,
 )
 
@@ -56,7 +53,7 @@ class LogPlayerBatchParser:
         with open(file_path, "r") as file:
             batch = []
             for line_number, line in enumerate(file, start=1):
-                if line_number % 100000 == 0:
+                if line_number % 1000000 == 0:
                     logger.info(
                         f"processing {file_path} line number {line_number} with elapsed seconds {time.time()-start_time}"
                     )
@@ -139,143 +136,30 @@ def get_top_10_avg_kill_per_player_id(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def load_player_top_10_from_path(file_path: str) -> Optional[pd.DataFrame]:
+def merge_text_files(input_directory, output_file):
     """
-    Loads the top 10 player statistics from a file.
+    Merge all text files from the input_directory into one output_file without loading them all into memory.
 
-    This function reads a file where each line represents a player's match statistics. It parses the data into a
-    DataFrame where each row contains a player's match ID and the number of kills in that match.
-
-    :param file_path: The path to the file containing player statistics.
-    :return: A DataFrame containing the player's match statistics or None if the file is empty.
+    :param input_directory: Directory containing the text files to merge
+    :param output_file: Path to the output file
     """
-    data = []
-    with open(file_path, "r") as file:
-        for line in file:
-            player_id, matches_kills = line.strip().split("|")
-            # Parse the matches_kills inline
-            for mk in matches_kills.split(","):
-                match_id, nb_kills = mk.split(":")
-                data.append(
-                    {
-                        "player_id": player_id,
-                        "match_id": match_id,
-                        "nb_kills": int(nb_kills),
-                    }
-                )
-    # Convert the list of dictionaries to a DataFrame
-    df = pd.DataFrame(data)
-    return df
+    # Ensure the input directory exists
+    if not os.path.isdir(input_directory):
+        logger.error(f"Directory {input_directory} does not exist.")
+        return
 
-
-def combine_files_for_previous_days(folders: list[str]) -> None:
-    """
-    Combines player top 10 files from previous days into a single folder.
-
-    This function creates a directory for the combined files and copies player top 10 files from the specified folders.
-    It ensures that files are named properly with the current date and deletes the temporary folders after combining.
-
-    :param folders: A list of folder names containing player top 10 files.
-    """
-    current_date = folders[-1][-8:]
-    all_files_folder_name = f"all_player_top10_{current_date}"
-    os.makedirs(all_files_folder_name, exist_ok=True)
-    for folder in folders:
-        for file in os.listdir(folder):
-            source_file = os.path.join(folder, file)
-            destination_file = os.path.join(
-                all_files_folder_name, f"{file[:-4]}_{current_date}.txt"
-            )
-            shutil.copy2(source_file, destination_file)
-
-    combined_folder_name = f"combined_player_top10_{current_date}"
-    os.makedirs(combined_folder_name, exist_ok=True)
-    previous_player = None
-    batch = []
-    for file in os.listdir(all_files_folder_name):
-        player_id = file.split("_")[0]
-        if previous_player is None:
-            # Handles first file
-            previous_player = player_id
-            batch = [file]
-        else:
-            if player_id == previous_player:
-                batch += [file]
-            else:
-                combined_df = combine_batch(batch, all_files_folder_name)
-                write_player_top_10_to_file(
-                    combined_df, os.path.join(combined_folder_name, file)
-                )
-                batch = [file]
-    # Handles last file
-    combined_df = combine_batch(batch, all_files_folder_name)
-    write_player_top_10_to_file(
-        combined_df, os.path.join(combined_folder_name, batch[0])
-    )
-    combine_write_player_top_10_to_file(
-        combined_folder_name, f"player_top10_{current_date}.txt"
-    )
-    delete_directory(combined_folder_name)
-    delete_directory(all_files_folder_name)
-
-
-def combine_batch(file_batch: list[str], file_directory: str) -> pd.DataFrame:
-    """
-    Combines statistics from multiple files into a single DataFrame.
-
-    This function reads a batch of files from a directory, loads the player statistics from each file, and combines them
-    into a single DataFrame.
-
-    :param file_batch: A list of filenames containing player statistics.
-    :param file_directory: The directory where the files are located.
-    :return: A DataFrame containing the combined player statistics.
-    """
-    combined_stats = None
-    for file in file_batch:
-        player_stats = load_player_top_10_from_path(os.path.join(file_directory, file))
-        if combined_stats is None:
-            combined_stats = player_stats
-        else:
-            combined_stats = concat_statistics_player_top_10(
-                combined_stats, player_stats
-            )
-    return combined_stats
-
-
-def combine_write_player_top_10_to_file(input_directory: str, output_file: str) -> None:
-    """
-    Combines player top 10 statistics from multiple files and writes them to a single output file.
-
-    This function reads all text files in the input directory, concatenates their contents, and writes the result
-    to the specified output file.
-
-    :param input_directory: The directory containing the input text files.
-    :param output_file: The path to the output file where the combined statistics will be written.
-    """
+    # Open the output file for writing
     with open(output_file, "w") as outfile:
-        # Iterate over all files in the input directory
+        # Iterate over all the files in the input directory
         for filename in os.listdir(input_directory):
-            # Check if the file has a .txt extension
-            if filename.endswith(".txt"):
-                file_path = os.path.join(input_directory, filename)
-                # Open and read the content of each text file
+            file_path = os.path.join(input_directory, filename)
+
+            # Only process text files
+            if os.path.isfile(file_path) and filename.endswith(".txt"):
+                # Open each input file in read mode and copy its content line by line
                 with open(file_path, "r") as infile:
-                    outfile.write(infile.read())
-
-
-def write_player_top_10(df: pd.DataFrame, date: str, player_id: str) -> None:
-    """
-    Writes the top 10 player match statistics to a file for the given player.
-
-    This function writes the player's top 10 match statistics to a file in the format `player_top10_<date>/<player_id>.txt`.
-
-    :param df: A DataFrame containing the player's top 10 match statistics.
-    :param date: The date of the matches.
-    :param player_id: The player ID for whom the statistics are written.
-    """
-    folder = f"player_top10_{date}"
-    file_path = os.path.join(folder, f"{player_id}.txt")
-    write_player_top_10_to_file(df, file_path)
+                    for line in infile:
+                        outfile.write(line)
 
 
 def write_player_top_10_to_file(df: pd.DataFrame, file_path: str) -> None:
@@ -307,25 +191,7 @@ def write_player_top_10_to_file(df: pd.DataFrame, file_path: str) -> None:
             file.write(f"{row['player_id']}|{row['matches_kills']}\n")
 
 
-def concat_statistics_player_top_10(
-    original_df: pd.DataFrame, new_df: Optional[pd.DataFrame]
-) -> pd.DataFrame:
-    """
-    Concatenates two DataFrames containing player statistics and returns the top 10 matches by kills.
-
-    This function combines the original DataFrame with a new DataFrame of player statistics, and returns the top 10
-    player matches by kills.
-
-    :param original_df: The original DataFrame containing player statistics.
-    :param new_df: The new DataFrame to concatenate with the original one. If None, the original DataFrame is returned.
-    :return: A DataFrame containing the top 10 player matches by kills.
-    """
-    if new_df is None:
-        return original_df
-    return get_top_10_avg_kill_per_player_id(pd.concat([original_df, new_df]))
-
-
-def process_players_batch(batch: list[list[str]], date: str) -> None:
+def process_players_batch(batch: list[list[str]]) -> None:
     """
     Processes a batch of player match data and computes the top 10 matches by kills.
 
@@ -333,7 +199,6 @@ def process_players_batch(batch: list[list[str]], date: str) -> None:
     by kills for each player.
 
     :param batch: A list of log entries representing player match data.
-    :param date: The date of the matches.
     """
     # Create a DataFrame from the parsed log data
     df = pd.DataFrame(
@@ -344,46 +209,112 @@ def process_players_batch(batch: list[list[str]], date: str) -> None:
     df["operator_id"] = df["operator_id"].astype(int)
     df["nb_kills"] = df["nb_kills"].astype(int)
 
-    # Get unique player IDs
-    unique_player_ids = df["player_id"].unique()
-
-    # Process each player individually
-    for player_id in unique_player_ids:
-        # Filter the dataframe for the current player
-        player_df = df[df["player_id"] == player_id]
-        process_player_batch(player_df, date)
-
-
-def process_player_batch(df: pd.DataFrame, date: str) -> None:
-    """
-    Processes a single player's match data and computes the top 10 matches by kills.
-
-    This function takes a player's match data, computes the top 10 matches by kills, and updates the player's
-    top 10 statistics.
-
-    :param df: A DataFrame containing the player's match data.
-    :param date: The date of the matches.
-    """
-    player_id = df["player_id"].iloc[0]
     player_top_10 = compute_top_10_player_matches(df)
-    write_player_top_10(player_top_10, date, player_id)
+    write_player_top_10_to_file(
+        player_top_10, os.path.join("tmp_join_output_dir", f"{uuid.uuid4()}.txt")
+    )
 
 
-def worker(work_queue: multiprocessing.Queue, date: str) -> None:
+def worker(work_queue: multiprocessing.Queue) -> None:
     """
     Worker function to process batches of player match data in parallel.
 
     This function continuously retrieves tasks from the work queue, processes them, and signals when all tasks are completed.
 
     :param work_queue: A multiprocessing queue containing batches of player match data.
-    :param date: The date of the matches.
     """
     while True:
         task = work_queue.get()
         if task is None:
             break
-        process_players_batch(task, date)
+        process_players_batch(task)
     signal_work_queue_finished(work_queue)
+
+
+def generate_chunked_sorted_files(
+    sorted_r6_files: list[str], tmp_all_files_folder_name: str
+) -> tuple[list[str], str]:
+    """
+    Splits sorted R6 Siege match log files into chunks and stores them in a temporary directory.
+
+    This function processes sorted R6 Siege match files by splitting them into smaller chunks and copying the
+    resulting chunk files to a temporary folder for further processing. It returns the names of the chunked files
+    and the latest date processed.
+
+    :param sorted_r6_files: List of sorted R6 Siege match log file paths to process.
+    :param tmp_all_files_folder_name: Temporary folder name where chunked files will be copied.
+    :return: A tuple containing the list of chunked file names and the latest date processed.
+    """
+    chunked_file_names = []
+    latest_date = ""
+    for file_path in sorted_r6_files:
+        date = file_path[11:-4]
+        latest_date = date
+        output_dir = f"chunks-player-{date}"
+        if not check_folder_exists_in_current_directory(output_dir):
+            os.makedirs(output_dir)
+            logger.info(f"separating chunk files in {output_dir}")
+            split_file(file_path, CHUNK_SIZE, output_dir, True)
+        logger.info(f"copying files in f{output_dir} to {tmp_all_files_folder_name}")
+        for file in os.listdir(output_dir):
+            source_file = os.path.join(output_dir, file)
+            destination_file = os.path.join(
+                tmp_all_files_folder_name, f"{file[:-4]}_{date}.txt"
+            )
+            chunked_file_names.append(destination_file)
+            shutil.copy2(source_file, destination_file)
+    return (chunked_file_names, latest_date)
+
+
+def process_log_batches_with_workers(
+    tmp_join_output_dir: str,
+    worker_count: int,
+    output_multi_days_file: str,
+    batch_size: int,
+    latest_date: str,
+    worker_cache_multiplier: int,
+) -> None:
+    """
+    Processes log batches using multiple workers and merges the results.
+
+    This function processes player log batches using a specified number of workers. It reads batches of log entries
+    from the given output file and assigns them to workers using a multiprocessing queue. After all workers finish
+    processing, it merges the output into a single file.
+
+    :param tmp_join_output_dir: Temporary directory to store intermediate outputs before merging.
+    :param worker_count: The number of worker processes to use for parallel processing.
+    :param output_multi_days_file: The file containing multiple days of logs to process.
+    :param batch_size: The number of log entries to process per batch.
+    :param latest_date: The latest date for naming the output file.
+    :param worker_cache_multiplier: Multiplier for worker queue caching, determining how many batches to queue for each worker.
+    """
+    os.makedirs(tmp_join_output_dir, exist_ok=True)
+    # Create a multiprocessing Queue to store work tasks in a thread-safe way
+    work_queue = multiprocessing.Queue()
+    workers = []
+    for _ in range(worker_count):
+        p = multiprocessing.Process(target=worker, args=(work_queue,))
+        workers.append(p)
+        p.start()
+    parser = LogPlayerBatchParser(
+        output_multi_days_file,
+        batch_size=batch_size,
+    )
+    log_parser_generator = parser.parse_logs_from_file_in_player_batches(
+        output_multi_days_file
+    )
+    next_batch = None
+    while True:
+        if work_queue.qsize() < worker_count * worker_cache_multiplier:
+            next_batch = next(log_parser_generator, None)
+            work_queue.put(next_batch)
+            if next_batch is None:
+                signal_work_queue_finished(work_queue)
+                break
+    for worker_process in workers:
+        # wait for all workers to finish
+        worker_process.join()
+    merge_text_files(tmp_join_output_dir, f"player_top10_{latest_date}.txt")
 
 
 def generate_statistics(
@@ -391,20 +322,22 @@ def generate_statistics(
     batch_size: int,
     worker_count: int,
     number_of_past_days: int,
+    worker_cache_multiplier: int,
 ) -> None:
     """
-    Generates player top 10 match statistics for the specified files.
+    Generates player top 10 statistics by kills for R6 Siege matches over the specified number of past days.
 
-    This function processes log files for the past `number_of_past_days`, sorts the files by player, and computes the
-    top 10 matches by kills for each player using multiprocessing. It also combines statistics from previous days into
-    a single output.
+    This function processes log files for the specified number of past days, splitting them into chunks, merging
+    the chunked files, and processing the log batches with multiple workers. After processing, it cleans up the
+    temporary files and directories.
 
-    :param files_to_consume: A comma-separated string of filenames to process, or None to process all available files.
+    :param files_to_consume: A comma-separated string of filenames to process, or None to process all available files
+                             from the current directory matching the pattern "r6-matches-".
     :param batch_size: The number of log entries to process per batch.
     :param worker_count: The number of worker processes to use for parallel processing.
-    :param number_of_past_days: The number of past days to include in the analysis.
+    :param number_of_past_days: The number of past days' worth of log files to include in the analysis.
+    :param worker_cache_multiplier: Multiplier for worker queue caching, determining how many batches to queue for each worker.
     """
-    WORKER_CACHE_MULTIPLIER = 8
     files_in_directory = get_files_in_current_directory()
     if not files_to_consume:
         r6_files = [
@@ -414,45 +347,29 @@ def generate_statistics(
         r6_files = files_to_consume.split(",")
     sorted_r6_files = sorted(r6_files)[-number_of_past_days:]
     logger.info(f"processing player top 10 matches by kill for files {sorted_r6_files}")
-    for file_path in sorted_r6_files:
-        date = file_path[11:-4]
-        if check_folder_exists_in_current_directory(f"player_top10_{date}"):
-            # if it was already previously computed or the statistic generation is disabled
-            logger.info(f"already processed {file_path}, skipping")
-            continue
-        os.makedirs(f"player_top10_{date}", exist_ok=True)
-        sorted_file_path = f"player-sorted-{file_path}"
-        sort_file(file_path, sorted_file_path, "player")
-        # Create a multiprocessing Queue to store work tasks in a thread-safe way
-        work_queue = multiprocessing.Queue()
-        workers = []
-        for _ in range(worker_count):
-            p = multiprocessing.Process(target=worker, args=(work_queue, date))
-            workers.append(p)
-            p.start()
-        parser = LogPlayerBatchParser(
-            sorted_file_path,
-            batch_size=batch_size,
-        )
-        log_parser_generator = parser.parse_logs_from_file_in_player_batches(file_path)
-        next_batch = None
-        while True:
-            if work_queue.qsize() < worker_count * WORKER_CACHE_MULTIPLIER:
-                next_batch = next(log_parser_generator, None)
-                work_queue.put(next_batch)
-                if next_batch is None:
-                    signal_work_queue_finished(work_queue)
-                    break
-        for worker_process in workers:
-            # wait for all workers to finish
-            worker_process.join()
 
-    folders_in_directory = get_folders_in_current_directory()
-    daily_folders = [
-        folder for folder in folders_in_directory if folder.startswith("player_top10_")
-    ]
-    sorted_daily_folders = sorted(daily_folders)[-number_of_past_days:]
-    combine_files_for_previous_days(sorted_daily_folders)
+    tmp_all_files_folder_name = "player_top10_tmp"
+    os.makedirs(tmp_all_files_folder_name, exist_ok=True)
+
+    chunked_file_names, latest_date = generate_chunked_sorted_files(
+        sorted_r6_files, tmp_all_files_folder_name
+    )
+    logger.info(f"merging chunked files for sorting")
+    output_multi_days_file = "player_top10_tmp.txt"
+    merge_chunk_files(chunked_file_names, output_multi_days_file)
+    tmp_join_output_dir = "tmp_join_output_dir"
+    process_log_batches_with_workers(
+        tmp_join_output_dir,
+        worker_count,
+        output_multi_days_file,
+        batch_size,
+        latest_date,
+        worker_cache_multiplier,
+    )
+    # Cleanup
+    delete_directory(tmp_all_files_folder_name)
+    os.remove(output_multi_days_file)
+    delete_directory(tmp_join_output_dir)
     logger.info("finished computing player top 10 matches by kill")
 
 
@@ -468,7 +385,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=10000,
+        default=100000,
         help="Batch size for memory optimization",
     )
     parser.add_argument(
@@ -483,9 +400,19 @@ if __name__ == "__main__":
         default=16,
         help="Number of separate workers running in parallel",
     )
+    parser.add_argument(
+        "--worker-cache-multiplier",
+        type=int,
+        default=4,
+        help="Number of batches to read from logs for different workers to be consumed, low number could induce worker idle time, high number increases memory usage",
+    )
 
     args = parser.parse_args()
 
     generate_statistics(
-        args.files_to_consume, args.batch_size, args.workers, args.number_of_past_days
+        args.files_to_consume,
+        args.batch_size,
+        args.workers,
+        args.number_of_past_days,
+        args.worker_cache_multiplier,
     )

@@ -134,28 +134,6 @@ def check_folder_exists_in_current_directory(folder_name: str) -> bool:
         return False
 
 
-def get_previous_day(current_date):
-    """
-    Calculates the previous day given a current date in 'YYYYMMDD' format.
-
-    This function converts the `current_date` string to a `datetime` object, subtracts one day, and returns
-    the previous day's date as a string in the same 'YYYYMMDD' format.
-
-    :param current_date: The current date in 'YYYYMMDD' format.
-    :return: The previous day's date in 'YYYYMMDD' format.
-    :raises ValueError: If the input date string is not valid.
-    """
-    try:
-        date_obj = datetime.strptime(current_date, "%Y%m%d")
-    except ValueError as e:
-        raise ValueError(
-            f"Invalid date format: {current_date}. Expected format is 'YYYYMMDD'."
-        ) from e
-
-    previous_day = date_obj - timedelta(days=1)
-    return previous_day.strftime("%Y%m%d")
-
-
 def signal_work_queue_finished(work_queue: multiprocessing.Queue) -> None:
     """
     Signals to the workers that the work queue has been finished by putting `None` in the queue.

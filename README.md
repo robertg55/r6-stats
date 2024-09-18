@@ -4,33 +4,31 @@
 
 This solution processes Rainbow Six Siege match log files to compute the **Top 100 Operator Matches by Average Kills** and the **Top 10 Matches by Kills by Player**. Logs are sorted and processed in batches, with statistics updated daily. Multiprocessing is utilized to speed up computation by distributing the workload across multiple processes.
 
-The primary goal is to generate daily statistics, computing the top 10 matches with the most kills for each player. If a player’s statistics are missing for the current day, the solution integrates the missing data from the previous day.
+The primary goal is to generate daily statistics, the solution integrates the previous days computed data to generate daily statistic containing multiple days.
 
 ### Key Features
 
 - **Batch Processing**: Processes logs in batches, optimizing memory usage and performance.
-- **Sorting**: Log files are optionally sorted to ensure correct order.
+- **Sorting**: Log files are sorted to ensure correct order.
 - **Multiprocessing**: Utilizes multiple processes to handle large logs efficiently.
 - **Daily Update**: Computes daily statistics while retaining and incorporating past data.
-- **Handling Missing Data**: Retrieves missing player data from the previous day.
 - **Queue-Based Parallelism**: Uses queues to manage work and results across processes.
 - **Low memeory usage**: Uses file system to store data instead of memory.
 - **Sample Log File Generation**: A dedicated script generates realistic test log files for custom scenarios.
 
 ## Directory Structure
 
+├── chunks-players-{date}/                # Folder containing chunked sorted files for a date, reused if not deleted
 ├── logs/                                 # Folder containing application logs
-├── player_top10_{date}/                  # Folder to store individual player statistics for the day
 ├── compute_operator.py                   # Python script to compute the top 100 Operators by average kills
 ├── compute_player.py                     # Python script to compute the top 10 matches by kills for all players
 ├── daily_operator_top100_{date}.txt      # Combined file for the top 100 Operators by average kills for a single day, reused if not deleted
 ├── log_sorter.py                         # Script to sort lines in a log file
 ├── log_util.py                           # Generic utility scripts used globally
-├── match-sorted-r6-matches-{date}.txt    # r6-matches log file sorted by matches, reused if not deleted
 ├── operator_top100_{date}.txt            # Resulting file for the top 100 Operators by average kills for the last 7 days
 ├── player_top10_{date}.txt               # Resulting file for the top 10 matches by kills for all players
-├── player-sorted-r6-matches-{date}.txt   # r6-matches log file sorted by player, reused if not deleted
 ├── r6-matches-{date}.log                 # r6-matches log input file
+├── README.md                             # Current file
 └── sample-log-file-generator.py          # Script for generating sample log data
 
 ## Prerequisites
@@ -47,11 +45,11 @@ Ensure you have the following installed:
 
 #### 1. Log Parsing with Optional Sorting
 
-The solution processes logs from `r6-matches-YYYYMMDD.log` files. It extracts key match data, such as player IDs, operator IDs, match IDs, and kills, validating the structure of each log file. Logs should be sorted via the --sort param if they aren't already grouped by matches.
+The solution processes logs from `r6-matches-YYYYMMDD.log` files. It extracts key match data, such as player IDs, operator IDs, match IDs, and kills, validating the structure of each log file. Logs should be sorted via the --sort param if they aren't already sorted by matches.
 
-#### 2. Batch Processing
+#### 2. Multiprocess Batch Processing
 
-Logs are processed in batches, each containing a fixed number of log entries. This optimizes memory usage and ensures the data is processed efficiently. The batch doesn't cut in the middle of a match to properly compute averages by match.
+Logs are processed in batches, assigned to separate processes for parallel processing. The batch doesn't cut in the middle of a match to properly compute averages by match.
 
 #### 3. Top 100 Operators Calculation
 
@@ -65,19 +63,19 @@ After processing all previous days, the top 100 operator statistics from the pre
 
 #### Step 1: Sorting the Logs
 
-Logs are split into smaller chunks and sorted by player_id.
+For every date of the last 7 days, logs are split into smaller sorted chunks by player_id. They are sorted in a folder named chunks-player-{date}, if the folder is kept between dates, it is reused and not re-chunked.
 
-#### Step 2: Batch Processing
+#### Step 2: Merge chunks + sorting
 
-Once sorted, logs are processed in batches, The statistic for every player_id is computed and is stored to disk in a individual file inside folder called player_top10_{date}
+All sorted chunks files are merged into one temporary folder. Then they are sorted and merged with heapq merge that uses functionality similar to merge sort to avoid storing all the data in memory during sorting.
 
-#### Step 3: Combining Previous Days Data
+#### Step 3: Batch Processing
 
-Player data for the given amount of days is combined into a temporary folder with added date to avoid overwriting duplicate player data.
+The sorted by player_id log file that was generated is read in batches of approximate 100000 lines (spit batches always contains all log for players inside) and are assigned to a multiprocessor workers that find the top 10 matches for every player and writes their output to a temporary text file for every batch.
 
-#### Step 4: Combining Results
+#### Step 4: Combining Text Files from Different Batches
 
-Duplicate player data file is recomputed for top 10 and merged into a single file. Merged Outputs are stored in a separate folder where every player has a single file. A script then merges all files together into a single file player_top10_{date}.txt for the final results.
+All the text file that were generated from the different batches are merged into a single one to get the final output.
 
 ## How to Run the Solutions
 
@@ -196,5 +194,3 @@ This command generates logs with 1,000 unique players and 10,000 matches per day
 ## Conclusion
 
 This solution efficiently processes large volumes of Rainbow Six Siege match logs, computing both operator and player statistics in a scalable, memory-efficient manner. By leveraging multiprocessing, the solution is capable of handling large data sets quickly, making it ideal for daily processing.
-
-For the top 10 matches by kills for all players, due to memory limitations, the solution currently relies on high I/O rates. To improve scalability and performance, especially for larger datasets, migrating to a thread-safe database (e.g., PostgreSQL or SQLite with WAL) would be recommended.
