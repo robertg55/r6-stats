@@ -18,18 +18,18 @@ The primary goal is to generate daily statistics, the solution integrates the pr
 
 ## Directory Structure
 
-├── chunks-players-{date}/                # Folder containing chunked sorted files for a date, reused if not deleted
-├── logs/                                 # Folder containing application logs
-├── compute_operator.py                   # Python script to compute the top 100 Operators by average kills
-├── compute_player.py                     # Python script to compute the top 10 matches by kills for all players
-├── daily_operator_top100_{date}.txt      # Combined file for the top 100 Operators by average kills for a single day, reused if not deleted
-├── log_sorter.py                         # Script to sort lines in a log file
-├── log_util.py                           # Generic utility scripts used globally
-├── operator_top100_{date}.txt            # Resulting file for the top 100 Operators by average kills for the last 7 days
-├── player_top10_{date}.txt               # Resulting file for the top 10 matches by kills for all players
-├── r6-matches-{date}.log                 # r6-matches log input file
-├── README.md                             # Current file
-└── sample-log-file-generator.py          # Script for generating sample log data
+├── chunks-players-{date}/               # Contains chunked sorted files for a date, reused if not deleted  
+├── logs/                                # Contains application logs  
+├── compute_operator.py                  # Computes the top 100 Operators by average kills  
+├── compute_player.py                    # Computes the top 10 matches by kills for all players  
+├── daily_operator_top100_{date}.txt     # Contains top 100 Operators by average kills for a single day, reused if not deleted  
+├── log_sorter.py                        # Sorts lines in a log file  
+├── log_util.py                          # Global utility scripts  
+├── operator_top100_{date}.txt           # Final output for the top 100 Operators by average kills over the last 7 days  
+├── player_top10_{date}.txt              # Final output for the top 10 matches by kills for all players  
+├── r6-matches-{date}.log                # Input log file for R6 matches  
+├── README.md                            # This file  
+└── sample-log-file-generator.py         # Script for generating sample log data  
 
 ## Prerequisites
 
