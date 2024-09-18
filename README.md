@@ -153,6 +153,12 @@ You can automate these scripts by adding them to a cron job (Linux/macOS) or Tas
 
 This runs the first script at midnight and the second at 2 AM every day.
 
+```bash
+0 0 * * * /usr/bin/python3 /path/to/scripts/compute_operator.py --batch-size 10000 --number-of-past-days 7 --workers 16 --sort ; /usr/bin/python3 /path/to/scripts/compute_player.py --batch-size 10000 --number-of-past-days 7 --workers 16
+```
+
+This runs both scripts at midnight, the compute_operator first followed by compute_player when the first one has finished
+
 ## Output
 
 - **Top 100 Operators by Kills**: Each day, results are saved to `operator_top100_{date}.txt`.
