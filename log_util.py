@@ -3,7 +3,7 @@ import multiprocessing
 import logging
 import shutil
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 def setup_logger() -> logging.Logger:
@@ -103,22 +103,6 @@ def get_folders_in_current_directory() -> list[str]:
         for folder in os.listdir(current_directory)
         if os.path.isdir(os.path.join(current_directory, folder))
     ]
-
-
-def check_file_exists_in_given_directory(folder_name: str, file_name: str) -> bool:
-    """
-    Checks if a file exists in the specified folder.
-
-    :param folder_name: The folder in which to check for the file.
-    :param file_name: The name of the file to check.
-    :return: True if the file exists, False otherwise.
-    """
-    file_path = os.path.join(os.getcwd(), folder_name, file_name)
-    if os.path.isfile(file_path):
-        return True
-    else:
-        return False
-
 
 def check_folder_exists_in_current_directory(folder_name: str) -> bool:
     """

@@ -146,7 +146,7 @@ def get_top_100_avg_kill_per_operator_id(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def load_operator_top_100_from_specific_day(file_name: str) -> Optional[pd.DataFrame]:
+def load_operator_top_100_from_specific_day(file_name: str) -> pd.DataFrame:
     """
     Loads the top 100 operators' statistics from a specific day.
 

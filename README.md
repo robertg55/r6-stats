@@ -38,6 +38,7 @@ Ensure you have the following installed:
 - **Python 3.11+**
 - **Pandas**: For data processing (`pip install pandas`)
 - **NumPy**: For random number distributions (`pip install numpy`)
+- **Windows or Linux**: MacOS doesn't fully support multiprocess queues
 
 ## Solution Overview
 
@@ -117,6 +118,7 @@ To compute the top 100 operator matches by average kills OR the top 10 matches b
    - `--workers`: Number of worker processes to run in parallel (default: 16).
    - `--number-of-past-days`: Number of past days to consider (default: 7).
    - `--sort`: Sorts the log files before processing if they are not already sorted by match number.
+   - `--worker_cache_multiplier`: Number of batches to read from logs for different workers to be consumed, low number could induce worker idle time, high number increases memory usage (default: 4).
 
    - **For top 10 matches by kills for all players**:
 
@@ -126,9 +128,10 @@ To compute the top 100 operator matches by average kills OR the top 10 matches b
 
    **Arguments:**
    - `--files-to-consume`: Comma-separated list of log files to process. If not provided, the script scan all available files.
-   - `--batch-size`: Number of log entries to process per batch, larger batches increase memory usage and increase processing speed (default: 10,000).
+   - `--batch-size`: Number of log entries to process per batch, larger batches increase memory usage and increase processing speed (default: 100,000).
    - `--workers`: Number of worker processes to run in parallel (default: 16).
    - `--number-of-past-days`: Number of past days to consider (default: 7).
+   - `--worker_cache_multiplier`: Number of batches to read from logs for different workers to be consumed, low number could induce worker idle time, high number increases memory usage (default: 4).
 
 ### Example Commands:
 

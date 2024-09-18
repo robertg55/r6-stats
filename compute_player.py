@@ -255,7 +255,7 @@ def generate_chunked_sorted_files(
             os.makedirs(output_dir)
             logger.info(f"separating chunk files in {output_dir}")
             split_file(file_path, CHUNK_SIZE, output_dir, True)
-        logger.info(f"copying files in f{output_dir} to {tmp_all_files_folder_name}")
+        logger.info(f"copying files in {output_dir} to {tmp_all_files_folder_name}")
         for file in os.listdir(output_dir):
             source_file = os.path.join(output_dir, file)
             destination_file = os.path.join(
